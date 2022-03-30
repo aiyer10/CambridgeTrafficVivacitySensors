@@ -1,37 +1,105 @@
 import pandas as pd
-import panel as pn 
-import folium
+import panel as pn
+import plotly.express as px
+from plotly.subplots import make_subplots
+from bokeh.plotting import figure
+import time
+
+def getFrame(df, agg_func):
+    if agg_func =='mean':
+        frame = df.groupby(['Month_Year', 'Vehicle Type', 'Zone'], as_index=False)['value'].mean()
+    elif agg_func=='sum':
+        frame = df.groupby(['Month_Year', 'Vehicle Type', 'Zone'], as_index=False)['value'].sum()
+
+    frame.sort_values(by='Month_Year', inplace=True)
+    frame['Month_Year'] = frame['Month_Year'].dt.strftime('%B-%Y')
+    return frame
+
+pn.extension(template='bootstrap')
+pd.options.display.max_rows=200
+start = time.time()
+print('Imports done in {}'.format(time.time()-start))
 
 
-def createGroup(f, zone):
-    f1 = f[f['Zone']==zone]
-    f1 = f1.groupby(['SensorID', 'variable', 'Zone', 'Month_Year'], as_index=False)['value'].sum()
-    print(f1.head())
-    return f1
-
-
-df = pd.read_parquet(r'C:\Users\IyerA3\OneDrive - Vodafone Group\Personal\CambridgeshireTraffic-main\CambridgeSmartSensors\SensorData.parquet')
+df = pd.read_parquet(r'results/SensorData.parquet')
 df.reset_index(inplace=True)
-df['Date'] = df['Date_Time'].dt.date
+# df['Month'] = df['Date_Time'].dt.month
+# df['Year'] = df['Date_Time'].dt.year
+print('File read and Month Year defined in {}'.format(time.time()-start))
+a = time.time()
 df['Month_Year'] = df['Date_Time'].dt.to_period('M')
+print('"Month_Year" created in {}'.format(time.time()-a))
 
 north = ['S20', 'S13', 'S19', 'S21', 'S18']
 city = ['S10', 'S2', 'S41', 'S1', 'S4', 'S7', 'S15']
 south = ['S12', 'S6', 'S14', 'S40', 'S3', 'S16']
-df.loc[df['SensorID'].isin(north), 'Zone']='North'
-df.loc[df['SensorID'].isin(city), 'Zone']='City'
-df.loc[df['SensorID'].isin(south), 'Zone']='South'
-print('Finished reading and creating zones')
+df.loc[df['SensorID'].isin(north), 'Zone'] = 'North'
+df.loc[df['SensorID'].isin(city), 'Zone'] = 'City'
+df.loc[df['SensorID'].isin(south), 'Zone'] = 'South'
+
+d1 = {'Car':'Small Vehicles', 'Pedestrian':'Pedestrians and Cyclists', 'Cyclist':'Pedestrians and Cyclists', 'Motorbike':'Small Vehicles', 'Bus':'Large Vehicles', 'OGV1':'Large Vehicles', 'OGV2':'Large Vehicles', 'LGV':'Large Vehicles'}
+df['Vehicle Type'] = df['variable'].map(d1)
+b = time.time()
+print('Finished reading and creating zones in {}'.format(b-a))
 
 
+# select = pn.widgets.Select(name='Select zone', options=df['Zone'].unique().tolist())
 mapDf = df[['SensorID', 'Lat', 'Long', 'Street location', 'Zone']].copy()
 mapDf = mapDf.drop_duplicates()
+# mapDf = mapDf[mapDf['Zone'].isin([select.value])]
 
-m = folium.Map(location=[52.205276, 0.119167], zoom_start=12, control_scale=True)
-for i, row in mapDf.iterrows():
-    folium.Marker(row['Lat'], row['Long']).add_to(m)
+p1 = px.scatter_mapbox(mapDf, lat='Lat', lon='Long', mapbox_style="open-street-map", zoom=10, color='Zone', hover_name='Street location')
+p1.update_traces(marker={'size': 12})
+p1.update_layout(title='Sensor locations', hovermode='closest', width=1000)
+c = time.time()
+print('P1 created in {}'.format(c-b))
 
-pn.Column(m).servable()
+
+northTraffic = df[df['Zone'] == 'North'][['SensorID', 'Month_Year', 'Vehicle Type', 'value', 'Zone']]
+northTrafficMean = getFrame(northTraffic, 'mean')
+northTrafficSum = getFrame(northTraffic, 'sum')
+
+cityTraffic = df[df['Zone'] == 'City'][['SensorID', 'Month_Year', 'Vehicle Type', 'value', 'Zone']]
+cityTrafficMean = getFrame(cityTraffic, 'mean')
+cityTrafficSum = getFrame(cityTraffic, 'sum')
+
+southTraffic = df[df['Zone'] == 'South'][['SensorID', 'Month_Year', 'Vehicle Type', 'value', 'Zone']]
+southTrafficMean = getFrame(southTraffic, 'mean')
+southTrafficSum = getFrame(southTraffic, 'sum')
+
+totalTrafficMean = pd.concat([northTrafficMean, cityTrafficMean, southTrafficMean], ignore_index=True)
+totalTrafficSum = pd.concat([northTrafficSum, cityTrafficSum, southTrafficSum], ignore_index=True)
+
+
+c1 = time.time()
+print('Zonal traffic frames created in {}'.format(c1-c))
+#
+#
+# # fig4 = px.bar(totalTraffic, x="Month_Year", y="value", color="Vehicle Type", barmode="group", facet_col="Zone", width=1000)
+fig4 = px.area(totalTrafficMean, x="Month_Year", y="value", color="Vehicle Type", facet_col="Zone", width=1000, title='Average traffic per month')
+fig5 = px.area(totalTrafficSum, x="Month_Year", y="value", color="Vehicle Type", facet_col="Zone", width=1000, title='Total traffic per month')
+
+#
+d = time.time()
+print('Traffic DF in {}'.format(d-c1))
+
+p2 = figure(width=300, height=300, name='Line')
+p2.line([0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 2, 1, 0])
+
+# trafficLines = pn.Row(northLine, cityLine, southLine)
+gspec = pn.GridSpec(sizing_mode='stretch_both')
+gspec[0:4, 0:5] = p1
+# gspec[0:2, 2:3] = fig1
+# gspec[2:4, 0:2] = fig2
+# gspec[2:4, 2:3] = fig3
+gspec[5:9, 0:5] = fig4
+gspec[10:14, 0:5] = fig5
+
+tab1 = gspec
+
+tab2 = p2
+tabs = pn.Tabs(tab1, tab2)
+r = pn.Row(tabs).servable()
 
 # points = hv.Points(mapDf, ["easting", "northing"]).opts(color="Zone")
 # tiles = CartoDark()
